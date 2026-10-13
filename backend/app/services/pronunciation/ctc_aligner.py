@@ -278,6 +278,8 @@ class CTCPhonemeAligner(PronunciationScorer):
             aligned_phonemes_count = 0
             all_confidences: List[float] = []
 
+            total_dur_sec = round(float(len(samples) / float(sample_rate)), 3)
+
             for w_idx, w_ref in enumerate(word_refs):
                 phone_diagnostics: List[PhonemeDiagnostic] = []
                 w_aligned_starts: List[float] = []
@@ -306,7 +308,7 @@ class CTCPhonemeAligner(PronunciationScorer):
                         span, tok_id = lookup
                         st_frame, en_frame = span
                         st_sec = round(float(st_frame * time_per_frame), 3)
-                        en_sec = round(float((en_frame + 1) * time_per_frame), 3)
+                        en_sec = round(min(total_dur_sec, float((en_frame + 1) * time_per_frame)), 3)
                         dur_sec = round(max(0.01, en_sec - st_sec), 3)
 
                         # Frame-level posterior average: exp(log_probs)
@@ -345,7 +347,7 @@ class CTCPhonemeAligner(PronunciationScorer):
                         )
 
                 w_start = min(w_aligned_starts) if w_aligned_starts else 0.0
-                w_end = max(w_aligned_ends) if w_aligned_ends else 0.0
+                w_end = min(total_dur_sec, max(w_aligned_ends)) if w_aligned_ends else 0.0
                 w_mean_conf = round(float(np.mean(w_confidences)), 3) if w_confidences else None
                 flagged = (w_mean_conf is not None and w_mean_conf < 0.25) or (len(w_confidences) < len(w_ref.phonemes))
 

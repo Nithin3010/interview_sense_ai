@@ -152,9 +152,41 @@ _CMU_SUBSET: Dict[str, List[str]] = {
     "questions": ["K", "W", "EH1", "S", "CH", "AH0", "N", "Z"],
     "answer": ["AE1", "N", "S", "ER0"],
     "answers": ["AE1", "N", "S", "ER0", "Z"],
-    "success": ["S", "AH0", "K", "S", "EH1", "S"],
-    "practice": ["P", "R", "AE1", "K", "T", "AH0", "S"],
     "sentence": ["S", "EH1", "N", "T", "AH0", "N", "S"],
+    "worked": ["W", "ER1", "K", "T"],
+    "she": ["SH", "IY1"],
+    "sells": ["S", "EH1", "L", "Z"],
+    "sell": ["S", "EH1", "L"],
+    "seashells": ["S", "IY1", "SH", "EH1", "L", "Z"],
+    "sea": ["S", "IY1"],
+    "shell": ["SH", "EH1", "L"],
+    "shells": ["SH", "EH1", "L", "Z"],
+    "by": ["B", "AY1"],
+    "seashore": ["S", "IY1", "SH", "AO1", "R"],
+    "shore": ["SH", "AO1", "R"],
+    "sure": ["SH", "UH1", "R"],
+    "did": ["D", "IH1", "D"],
+    "done": ["D", "AH1", "N"],
+    "doing": ["D", "UW1", "IH0", "NG"],
+    "managed": ["M", "AE1", "N", "AH0", "JH", "D"],
+    "designed": ["D", "IH0", "Z", "AY1", "N", "D"],
+    "solved": ["S", "AA1", "L", "V", "D"],
+    "built": ["B", "IH1", "L", "T"],
+    "created": ["K", "R", "IY0", "EY1", "T", "IH0", "D"],
+    "create": ["K", "R", "IY0", "EY1", "T"],
+    "joined": ["JH", "OY1", "N", "D"],
+    "join": ["JH", "OY1", "N"],
+    "helped": ["HH", "EH1", "L", "P", "T"],
+    "help": ["HH", "EH1", "L", "P"],
+    "improved": ["IH0", "M", "P", "R", "UW1", "V", "D"],
+    "tested": ["T", "EH1", "S", "T", "IH0", "D"],
+    "delivered": ["D", "IH0", "L", "IH1", "V", "ER0", "D"],
+    "deliver": ["D", "IH0", "L", "IH1", "V", "ER0"],
+    "how": ["HH", "AW1"],
+    "much": ["M", "AH1", "CH"],
+    "wood": ["W", "UH1", "D"],
+    "should": ["SH", "UH1", "D"],
+    "chuck": ["CH", "AH1", "K"],
 }
 
 # Rule-based fallback mapping single letters to approximate canonical ARPAbet sounds
@@ -251,26 +283,59 @@ def word_to_phonemes(word: str) -> List[str]:
     n = len(clean_word)
     while i < n:
         if i < n - 1:
-            digraph = clean_word[i : i + 2]
-            if digraph in ("th",):
+            pair = clean_word[i : i + 2]
+            if pair in ("th",):
                 phonemes.append("TH")
                 i += 2
                 continue
-            elif digraph in ("sh",):
+            elif pair in ("sh",):
                 phonemes.append("SH")
                 i += 2
                 continue
-            elif digraph in ("ch",):
+            elif pair in ("ch",):
                 phonemes.append("CH")
                 i += 2
                 continue
-            elif digraph in ("ee", "ea"):
+            elif pair in ("ee", "ea"):
                 phonemes.append("IY")
                 i += 2
                 continue
-            elif digraph in ("oo",):
+            elif pair in ("oo",):
                 phonemes.append("UW")
                 i += 2
+                continue
+            elif pair in ("ai", "ay"):
+                phonemes.append("EY")
+                i += 2
+                continue
+            elif pair in ("oi", "oy"):
+                phonemes.append("OY")
+                i += 2
+                continue
+            elif pair in ("ou", "ow"):
+                phonemes.append("AW")
+                i += 2
+                continue
+            elif pair in ("ng",):
+                phonemes.append("NG")
+                i += 2
+                continue
+            elif pair[0] == pair[1] and pair[0] in _FALLBACK_LETTER_MAP:
+                # Collapse double consonant letters in spelling (e.g. 'll' -> 'L', 'ss' -> 'S')
+                phonemes.append(_FALLBACK_LETTER_MAP[pair[0]])
+                i += 2
+                continue
+
+        # Terminal silent 'e' guard: word length >= 3 and ends in consonant + 'e'
+        if i == n - 1 and clean_word[i] == "e" and n >= 3 and clean_word[i - 1] not in ("e", "a", "i", "o", "u"):
+            i += 1
+            continue
+
+        # Terminal or vowel-like 'y'
+        if clean_word[i] == "y":
+            if i == n - 1 or n == 1 or clean_word[i - 1] not in ("a", "e", "i", "o", "u"):
+                phonemes.append("AY")
+                i += 1
                 continue
 
         char = clean_word[i]

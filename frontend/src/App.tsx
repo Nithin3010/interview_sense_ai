@@ -90,7 +90,23 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  const [referenceWarning, setReferenceWarning] = useState<string | null>(null);
+
+  const handleNewAnalysis = () => {
+    resetAnalysis();
+    setReferenceWarning(null);
+    // Explicitly reset reference sentence so old references are never silently reused for new audio
+    setReferenceText('');
+  };
+
   const handleAudioSubmit = async (audioSource: File | Blob, filename: string) => {
+    if (practiceMode === 'reference' && referenceText.trim().length === 0) {
+      setReferenceWarning(
+        'Please enter a target reference sentence or select a quick prompt below before analyzing in reference mode.'
+      );
+      return;
+    }
+    setReferenceWarning(null);
     const effectiveRef = practiceMode === 'reference' ? referenceText.trim() : undefined;
     await analyzeAudio(audioSource, filename, effectiveRef);
   };
@@ -111,7 +127,7 @@ export const App: React.FC = () => {
       <main style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         {/* If an analysis result is present, display the complete delivery analysis dashboard */}
         {analysisResult ? (
-          <Dashboard data={analysisResult} onNewAnalysis={resetAnalysis} />
+          <Dashboard data={analysisResult} onNewAnalysis={handleNewAnalysis} />
         ) : isAnalyzing ? (
           /* 2. Loading State with Multi-Step Progress Indicator */
           <div className="glass-card">
@@ -178,7 +194,10 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   className={`mode-pill-btn ${practiceMode === 'spontaneous' ? 'active' : ''}`}
-                  onClick={() => setPracticeMode('spontaneous')}
+                  onClick={() => {
+                    setPracticeMode('spontaneous');
+                    setReferenceWarning(null);
+                  }}
                 >
                   <MessageSquare size={16} />
                   <span>Spontaneous Interview Response</span>
@@ -202,7 +221,10 @@ export const App: React.FC = () => {
                     className="reference-textarea"
                     placeholder="Enter or select a target sentence to practice reading aloud..."
                     value={referenceText}
-                    onChange={(e) => setReferenceText(e.target.value)}
+                    onChange={(e) => {
+                      setReferenceText(e.target.value);
+                      setReferenceWarning(null);
+                    }}
                     maxLength={500}
                   />
 
@@ -214,12 +236,26 @@ export const App: React.FC = () => {
                         key={idx}
                         type="button"
                         className="prompt-chip"
-                        onClick={() => setReferenceText(prompt)}
+                        onClick={() => {
+                          setReferenceText(prompt);
+                          setReferenceWarning(null);
+                        }}
                         title={`Load prompt: "${prompt}"`}
                       >
                         {prompt.length > 42 ? `${prompt.slice(0, 40)}...` : prompt}
                       </button>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Reference Mode Validation Alert */}
+              {referenceWarning && (
+                <div className="error-callout" style={{ marginTop: '0.75rem' }}>
+                  <AlertCircle size={18} />
+                  <div>
+                    <strong>Target Sentence Required:</strong>
+                    <p style={{ marginTop: '0.15rem' }}>{referenceWarning}</p>
                   </div>
                 </div>
               )}

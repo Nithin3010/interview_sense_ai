@@ -26,7 +26,7 @@ export const PronunciationCard: React.FC<PronunciationCardProps> = ({ pronunciat
   const isError = status === 'error';
 
   const getStatusBadge = () => {
-    if (isReady) return <span className="status-tag status-emerald">Status: ALIGNED & READY</span>;
+    if (isReady) return <span className="status-tag status-emerald">Status: ALIGNED (UNCALIBRATED EVIDENCE)</span>;
     if (isExperimental) return <span className="status-tag status-amber">Status: EXPERIMENTAL / PARTIAL</span>;
     if (isUnavailable) return <span className="status-tag status-dim">Status: UNAVAILABLE</span>;
     return <span className="status-tag status-offline">Status: ERROR</span>;

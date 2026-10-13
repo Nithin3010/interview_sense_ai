@@ -347,3 +347,85 @@ def test_model_manager_lazy_pronunciation_and_concurrency():
     assert all(results)
     assert manager.is_pronunciation_ready
 
+
+def test_g2p_audited_lexicon_and_fallback_defects():
+    # Audit: verified canonical pronunciations for common reference words
+    assert word_to_phonemes("worked") == ["W", "ER1", "K", "T"]
+    assert word_to_phonemes("she") == ["SH", "IY1"]
+    assert word_to_phonemes("sells") == ["S", "EH1", "L", "Z"]
+    assert word_to_phonemes("seashells") == ["S", "IY1", "SH", "EH1", "L", "Z"]
+    assert word_to_phonemes("by") == ["B", "AY1"]
+    assert word_to_phonemes("seashore") == ["S", "IY1", "SH", "AO1", "R"]
+
+    # Audit: fallback heuristics should collapse double consonants
+    # e.g., 'banner' -> B AE N ER (not B AE N N ER)
+    banner_phones = word_to_phonemes("banner")
+    assert banner_phones.count("N") == 1
+
+    # Audit: fallback heuristics should not emit trailing EH for silent final 'e'
+    # e.g. 'cone' -> K AA N (not K AA N EH)
+    cone_phones = word_to_phonemes("cone")
+    assert "EH" not in cone_phones
+
+
+def test_ctc_repeated_phonemes_require_intermediate_blank():
+    from backend.app.services.pronunciation.ctc_aligner import ctc_viterbi_alignment
+
+    # Sequence of two identical target tokens: [5, 5]
+    # In CTC, consecutive identical labels cannot be decoded without an intervening blank
+    T, V = 6, 10
+    emissions = np.full((T, V), -5.0, dtype=np.float32)
+
+    # Frame 0: token 5
+    emissions[0, 5] = -0.05
+    # Frame 1: blank (0)
+    emissions[1, 0] = -0.05
+    # Frame 2: token 5
+    emissions[2, 5] = -0.05
+    # Frames 3-5: blank
+    emissions[3:, 0] = -0.05
+
+    spans = ctc_viterbi_alignment(emissions, [5, 5], blank_id=0)
+    assert len(spans) == 2
+    assert spans[0] is not None
+    assert spans[1] is not None
+    # The first token is at frame 0, second token must be at frame >= 2 (after blank)
+    assert spans[0][1] < spans[1][0]
+    assert spans[0][0] == 0
+    assert spans[1][0] == 2
+
+
+def test_reference_assessment_boundaries_remain_inside_audio_duration():
+    from backend.app.services.pronunciation.wav2vec2_model import MockPhonemeModel
+
+    # Audio duration exactly 1.0s (16000 samples)
+    sample_rate = 16000
+    total_dur = 1.0
+    samples = (0.2 * np.sin(2 * np.pi * 200 * np.linspace(0, total_dur, int(total_dur * sample_rate)))).astype(np.float32)
+
+    mock_model = MockPhonemeModel(
+        confidence_level=0.85,
+        simulate_aligned_tokens=[4, 5, 6, 7],
+    )
+    aligner = CTCPhonemeAligner(model=mock_model)
+
+    res = aligner.assess(
+        samples=samples,
+        sample_rate=sample_rate,
+        words=[],
+        transcript_text="",
+        reference_text="hello",
+    )
+
+    assert res.status == "ready"
+    assert len(res.word_diagnostics) == 1
+    word_diag = res.word_diagnostics[0]
+    assert word_diag.start >= 0.0
+    assert word_diag.end <= total_dur + 1e-4
+
+    for ph in word_diag.phonemes:
+        assert ph.start >= 0.0
+        assert ph.end <= total_dur + 1e-4
+        assert ph.duration <= total_dur
+
+
