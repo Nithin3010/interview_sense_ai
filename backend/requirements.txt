@@ -1,0 +1,23 @@
+# Backend Dependencies for InterviewSense AI
+# Verified for Windows 11 / Python 3.14.6 environment
+
+# Web Framework & API
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-multipart>=0.0.20
+
+# Audio Decoding & Digital Signal Processing
+av>=19.0.0              # Pre-compiled abi3 Windows wheel (bundled FFmpeg C-libraries)
+soundfile>=0.14.0
+numpy>=2.0.0
+scipy>=1.15.0
+
+# Speech Recognition & Acoustic Feature Extraction
+faster-whisper>=1.2.0   # CTranslate2 backend with INT8 CPU inference
+praat-parselmouth>=0.4.7 # Native Praat C++ wrapper for accurate F0 pitch extraction
+
+# Testing & Development
+pytest>=8.3.0
+httpx>=0.28.0
