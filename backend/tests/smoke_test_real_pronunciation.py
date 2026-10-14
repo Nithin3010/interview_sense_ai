@@ -34,10 +34,14 @@ def main():
         else "I have worked on distributed systems for three years."
     )
 
+    is_spontaneous = (ref_sentence.strip() == "--spontaneous")
+
     print("=" * 65)
     print("InterviewSense AI — Real Wav2Vec2 CTC Pronunciation Smoke Test")
     print(f"Target model: {settings.PRONUNCIATION_MODEL_NAME}")
-    print(f"Target reference sentence: \"{ref_sentence}\"")
+    print(f"Mode: {'Spontaneous ASR Hypothesis' if is_spontaneous else 'Target Reference Sentence'}")
+    if not is_spontaneous:
+        print(f"Target reference sentence: \"{ref_sentence}\"")
     print("=" * 65)
 
     if audio_path and os.path.exists(audio_path):
@@ -51,6 +55,7 @@ def main():
     else:
         print("Notice: No speech audio file passed. Generating 3.5s speech-range test carrier signal.")
         print("To test on genuine recorded speech, pass: python backend/tests/smoke_test_real_pronunciation.py <file.wav> \"<reference>\"")
+        print("For spontaneous speech test: python backend/tests/smoke_test_real_pronunciation.py <file.wav> --spontaneous")
         duration_s = 3.5
         sample_rate = 16000
         t_axis = np.linspace(0, duration_s, int(duration_s * sample_rate), endpoint=False)
@@ -89,14 +94,28 @@ def main():
 
         aligner = CTCPhonemeAligner(model=model, model_name=settings.PRONUNCIATION_MODEL_NAME)
 
-        print("\nRunning phoneme-level CTC Trellis alignment against reference targets...")
+        words = []
+        transcript = ""
+        if is_spontaneous:
+            from faster_whisper import WhisperModel
+            from backend.app.services.transcription import transcribe_audio
+            print(f"\nTranscribing audio using faster-whisper ({settings.WHISPER_MODEL_SIZE})...")
+            asr_model = WhisperModel(settings.WHISPER_MODEL_SIZE, device=settings.WHISPER_DEVICE, compute_type=settings.WHISPER_COMPUTE_TYPE)
+            t_res = transcribe_audio(samples=samples, model=asr_model, language="en")
+            words = t_res.words
+            transcript = t_res.text
+            print(f"Recognized hypothesis: \"{transcript}\" ({len(words)} words)")
+            print("\nRunning phoneme-level CTC Trellis alignment against ASR hypothesis...")
+        else:
+            print("\nRunning phoneme-level CTC Trellis alignment against reference targets...")
+
         t_infer_start = time.time()
         result = aligner.assess(
             samples=samples,
             sample_rate=sample_rate,
-            words=[],
-            transcript_text="",
-            reference_text=ref_sentence,
+            words=words,
+            transcript_text=transcript,
+            reference_text=None if is_spontaneous else ref_sentence,
         )
         t_infer = time.time() - t_infer_start
         mem_peak_mb = proc.memory_info().rss / (1024 * 1024) if proc else 0.0

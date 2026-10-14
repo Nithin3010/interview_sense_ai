@@ -55,19 +55,22 @@ class MockWhisperModel:
 
 @pytest.fixture(autouse=True, scope="session")
 def setup_test_model():
-    """Inject mock ASR model to guarantee no external weights download during test suite."""
+    """Inject mock models to guarantee no external weights download during automated test suite."""
     mock_model = MockWhisperModel()
     model_manager.set_asr_model(mock_model, "mock-small.en")
     original_load = model_manager.load_models
     original_unload = model_manager.unload_models
+    original_load_pron = model_manager.load_pronunciation_model
 
     model_manager.load_models = lambda: model_manager.set_asr_model(mock_model, "mock-small.en")
     model_manager.unload_models = lambda: None
+    model_manager.load_pronunciation_model = lambda: False
 
     yield mock_model
 
     model_manager.load_models = original_load
     model_manager.unload_models = original_unload
+    model_manager.load_pronunciation_model = original_load_pron
 
 
 @pytest.fixture(scope="session")

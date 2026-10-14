@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, List, Optional, Sequence, Tuple
 import numpy as np
 
@@ -14,6 +15,8 @@ from backend.app.services.pronunciation.g2p import (
     validate_reference_text,
     text_to_reference_phonemes,
     WordReference,
+    ARPABET_TO_ESPEAK,
+    strip_stress,
 )
 
 logger = logging.getLogger("interviewsense.pronunciation.ctc_aligner")
@@ -262,7 +265,8 @@ class CTCPhonemeAligner(PronunciationScorer):
                 for p_idx, p_ref in enumerate(w_ref.phonemes):
                     if p_ref.is_supported and p_ref.model_token and p_ref.model_token in vocab:
                         tok_id = vocab[p_ref.model_token]
-                        flat_targets.append((tok_id, w_idx, p_idx))
+                        if tok_id < emissions.shape[1]:
+                            flat_targets.append((tok_id, w_idx, p_idx))
 
             target_tokens = [t[0] for t in flat_targets]
             aligned_spans = ctc_viterbi_alignment(emissions, target_tokens, blank_id=blank_id)
@@ -415,7 +419,7 @@ class CTCPhonemeAligner(PronunciationScorer):
         words: Sequence[Any],
         transcript_text: str,
     ) -> PronunciationAssessmentResult:
-        # Graceful 'unavailable' state if model weights are not loaded
+        # 1. Graceful 'unavailable' state if model weights are not loaded
         if not self.is_available:
             return PronunciationAssessmentResult(
                 status="unavailable",
@@ -423,13 +427,15 @@ class CTCPhonemeAligner(PronunciationScorer):
                 phoneme_inventory="ARPAbet-39",
                 transcript_evaluated=transcript_text,
                 transcript_source="ASR-generated (faster-whisper)",
+                reference_text=None,
                 word_diagnostics=[],
                 methodology_note=(
-                    "Pronunciation assessment is unavailable: Pretrained phoneme-level acoustic model is not initialized. "
-                    "Unscripted interview speech evaluation requires dedicated phoneme posterior calibration."
+                    "Pronunciation assessment is unavailable: Pretrained phoneme-level acoustic model is uninitialized. "
+                    "Acoustic model weights must be loaded to evaluate speech pronunciation."
                 ),
             )
 
+        # 2. Empty transcript / words check
         if not words or not transcript_text.strip():
             return PronunciationAssessmentResult(
                 status="experimental",
@@ -437,13 +443,218 @@ class CTCPhonemeAligner(PronunciationScorer):
                 phoneme_inventory="ARPAbet-39",
                 transcript_evaluated=transcript_text,
                 transcript_source="ASR-generated (faster-whisper)",
+                reference_text=None,
                 word_diagnostics=[],
-                methodology_note="Transcript is empty; no words available for phoneme alignment.",
+                alignment_coverage_ratio=0.0,
+                mean_acoustic_confidence=None,
+                methodology_note="Transcript is empty; no words recognized for phonetic alignment.",
             )
 
         try:
-            word_diagnostics: List[WordPronunciationDiagnostic] = []
+            total_dur_sec = round(float(len(samples) / float(sample_rate)), 3)
 
+            # Check if model supports frame emissions for real CTC alignment
+            if hasattr(self._model, "get_frame_emissions"):
+                # Silence / no-speech check for acoustic alignment
+                rms_energy = float(np.sqrt(np.mean(samples ** 2))) if len(samples) > 0 else 0.0
+                if len(samples) == 0 or rms_energy < 1e-4:
+                    return PronunciationAssessmentResult(
+                        status="experimental",
+                        model_identifier=self._model_name,
+                        phoneme_inventory="ARPAbet-39",
+                        transcript_evaluated=transcript_text,
+                        transcript_source="ASR-generated (faster-whisper)",
+                        reference_text=None,
+                        word_diagnostics=[],
+                        alignment_coverage_ratio=0.0,
+                        mean_acoustic_confidence=None,
+                        methodology_note="Audio contains no discernible speech energy or is silent; phoneme alignment cannot be performed.",
+                    )
+                emissions, time_per_frame = self._model.get_frame_emissions(samples, sample_rate)
+                vocab = getattr(self._model, "vocab", {})
+                blank_id = vocab.get("<pad>", 0)
+
+                # Build candidate phonemes per recognized word
+                word_phoneme_refs: List[Tuple[Any, str, List[Tuple[str, str, Optional[str], bool]]]] = []
+                flat_targets: List[Tuple[int, int, int]] = []
+
+                for w_idx, w in enumerate(words):
+                    raw_word = getattr(w, "word", "").strip()
+                    clean_word = re.sub(r"[^\w']", "", raw_word).strip()
+                    if not clean_word:
+                        continue
+
+                    raw_phonemes = word_to_phonemes(clean_word)
+                    p_specs: List[Tuple[str, str, Optional[str], bool]] = []
+
+                    for p_idx, p in enumerate(raw_phonemes):
+                        base_p = strip_stress(p)
+                        model_tok = ARPABET_TO_ESPEAK.get(base_p, None)
+                        is_sup = (
+                            model_tok is not None
+                            and model_tok in vocab
+                            and vocab[model_tok] < emissions.shape[1]
+                        )
+                        p_specs.append((p, base_p, model_tok, is_sup))
+
+                        if is_sup and model_tok:
+                            tok_id = vocab[model_tok]
+                            flat_targets.append((tok_id, len(word_phoneme_refs), p_idx))
+
+                    word_phoneme_refs.append((w, clean_word, p_specs))
+
+                if not flat_targets:
+                    return PronunciationAssessmentResult(
+                        status="experimental",
+                        model_identifier=self._model_name,
+                        phoneme_inventory="ARPAbet-39",
+                        transcript_evaluated=transcript_text,
+                        transcript_source="ASR-generated (faster-whisper)",
+                        reference_text=None,
+                        word_diagnostics=[],
+                        alignment_coverage_ratio=0.0,
+                        mean_acoustic_confidence=None,
+                        methodology_note="Recognized words contained no supported phonemes in the acoustic model inventory.",
+                    )
+
+                target_tokens = [t[0] for t in flat_targets]
+                aligned_spans = ctc_viterbi_alignment(emissions, target_tokens, blank_id=blank_id)
+
+                span_map: dict = {}
+                for target_idx, span in enumerate(aligned_spans):
+                    _, w_pos, p_idx = flat_targets[target_idx]
+                    span_map[(w_pos, p_idx)] = (span, flat_targets[target_idx][0])
+
+                word_diagnostics: List[WordPronunciationDiagnostic] = []
+                total_expected_phonemes = 0
+                aligned_phonemes_count = 0
+                all_confidences: List[float] = []
+
+                for w_pos, (w_obj, clean_w, p_specs) in enumerate(word_phoneme_refs):
+                    phone_diagnostics: List[PhonemeDiagnostic] = []
+                    w_aligned_starts: List[float] = []
+                    w_aligned_ends: List[float] = []
+                    w_confidences: List[float] = []
+
+                    w_whisper_start = round(float(getattr(w_obj, "start", 0.0)), 3)
+                    w_whisper_end = round(float(getattr(w_obj, "end", 0.0)), 3)
+                    w_prob = float(getattr(w_obj, "probability", 1.0))
+
+                    for p_idx, (p_arpabet, base_p, model_tok, is_sup) in enumerate(p_specs):
+                        total_expected_phonemes += 1
+                        lookup = span_map.get((w_pos, p_idx), None)
+
+                        if not is_sup:
+                            phone_diagnostics.append(
+                                PhonemeDiagnostic(
+                                    phoneme=p_arpabet,
+                                    start=0.0,
+                                    end=0.0,
+                                    duration=0.0,
+                                    acoustic_match_confidence=None,
+                                    is_supported=False,
+                                    diagnostic_note="Phoneme unsupported by acoustic model vocabulary",
+                                )
+                            )
+                            continue
+
+                        if lookup is not None and lookup[0] is not None:
+                            span, tok_id = lookup
+                            st_frame, en_frame = span
+                            st_sec = round(max(0.0, float(st_frame * time_per_frame)), 3)
+                            en_sec = round(min(total_dur_sec, float((en_frame + 1) * time_per_frame)), 3)
+                            dur_sec = round(max(0.01, en_sec - st_sec), 3)
+
+                            seg_log_probs = emissions[st_frame : en_frame + 1, tok_id]
+                            conf = float(np.mean(np.exp(seg_log_probs)))
+                            conf = round(max(0.0, min(1.0, conf)), 3)
+
+                            aligned_phonemes_count += 1
+                            all_confidences.append(conf)
+                            w_confidences.append(conf)
+                            w_aligned_starts.append(st_sec)
+                            w_aligned_ends.append(en_sec)
+
+                            phone_diagnostics.append(
+                                PhonemeDiagnostic(
+                                    phoneme=p_arpabet,
+                                    start=st_sec,
+                                    end=en_sec,
+                                    duration=dur_sec,
+                                    acoustic_match_confidence=conf,
+                                    is_supported=True,
+                                    diagnostic_note=None,
+                                )
+                            )
+                        else:
+                            phone_diagnostics.append(
+                                PhonemeDiagnostic(
+                                    phoneme=p_arpabet,
+                                    start=0.0,
+                                    end=0.0,
+                                    duration=0.0,
+                                    acoustic_match_confidence=None,
+                                    is_supported=True,
+                                    diagnostic_note="Phoneme omitted or not aligned in acoustic signal",
+                                )
+                            )
+
+                    w_start = min(w_aligned_starts) if w_aligned_starts else w_whisper_start
+                    w_end = min(total_dur_sec, max(w_aligned_ends)) if w_aligned_ends else w_whisper_end
+                    w_mean_conf = round(float(np.mean(w_confidences)), 3) if w_confidences else None
+
+                    is_low_conf = w_mean_conf is not None and w_mean_conf < 0.25
+                    is_partial_aligned = len(w_confidences) < len(p_specs)
+                    is_low_asr_prob = w_prob < 0.45
+                    flagged = is_low_conf or is_partial_aligned or is_low_asr_prob
+
+                    diag_notes: List[str] = []
+                    if is_low_asr_prob:
+                        diag_notes.append("Low ASR hypothesis probability; word transcription may be uncertain.")
+                    if is_partial_aligned:
+                        diag_notes.append("Partial phoneme alignment: some candidate sounds unaligned or unsupported.")
+                    elif is_low_conf:
+                        diag_notes.append("Low acoustic match evidence across candidate phonemes.")
+
+                    word_diagnostics.append(
+                        WordPronunciationDiagnostic(
+                            word=clean_w,
+                            start=w_start,
+                            end=w_end,
+                            phonemes=phone_diagnostics,
+                            flagged=flagged,
+                            diagnostic_note=" ".join(diag_notes) if diag_notes else None,
+                            mean_acoustic_confidence=w_mean_conf,
+                        )
+                    )
+
+                coverage_ratio = round(aligned_phonemes_count / max(1, total_expected_phonemes), 3)
+                mean_overall_conf = round(float(np.mean(all_confidences)), 3) if all_confidences else None
+                status = "ready" if coverage_ratio >= 0.70 else "experimental"
+
+                methodology_note = (
+                    "Spontaneous speech phoneme assessment using Wav2Vec2 CTC phonetic alignment against ASR-recognized word hypotheses. "
+                    "Acoustic match confidence reflects frame-averaged posterior probability under the acoustic model (0.0 to 1.0). "
+                    "Notice: Transcripts are generated by ASR and represent hypotheses rather than verified ground truth. "
+                    "Low confidence or alignment discrepancies may stem from ASR transcription errors, accent diversity, "
+                    "or conversational coarticulation rather than speaker mispronunciation. Not an accredited oral proficiency grade."
+                )
+
+                return PronunciationAssessmentResult(
+                    status=status,
+                    model_identifier=self._model_name,
+                    phoneme_inventory="ARPAbet-39",
+                    transcript_evaluated=transcript_text,
+                    transcript_source="ASR-generated (faster-whisper)",
+                    reference_text=None,
+                    word_diagnostics=word_diagnostics,
+                    alignment_coverage_ratio=coverage_ratio,
+                    mean_acoustic_confidence=mean_overall_conf,
+                    methodology_note=methodology_note,
+                )
+
+            # Fallback path for lightweight mock models with score_phoneme (backward compatibility for mock tests)
+            word_diagnostics_fb: List[WordPronunciationDiagnostic] = []
             for w in words:
                 raw_word = getattr(w, "word", "").strip()
                 if not raw_word:
@@ -456,7 +667,7 @@ class CTCPhonemeAligner(PronunciationScorer):
                 target_phonemes = word_to_phonemes(raw_word)
                 num_phones = len(target_phonemes)
 
-                phone_diagnostics: List[PhonemeDiagnostic] = []
+                phone_diagnostics_fb: List[PhonemeDiagnostic] = []
                 for idx, ph in enumerate(target_phonemes):
                     p_start = round(w_start + (idx / num_phones) * w_dur, 3)
                     p_end = round(w_start + ((idx + 1) / num_phones) * w_dur, 3)
@@ -466,7 +677,7 @@ class CTCPhonemeAligner(PronunciationScorer):
                     if hasattr(self._model, "score_phoneme"):
                         match_conf = self._model.score_phoneme(ph, p_start, p_end)
 
-                    phone_diagnostics.append(
+                    phone_diagnostics_fb.append(
                         PhonemeDiagnostic(
                             phoneme=ph,
                             start=p_start,
@@ -476,12 +687,12 @@ class CTCPhonemeAligner(PronunciationScorer):
                         )
                     )
 
-                word_diagnostics.append(
+                word_diagnostics_fb.append(
                     WordPronunciationDiagnostic(
                         word=raw_word,
                         start=w_start,
                         end=w_end,
-                        phonemes=phone_diagnostics,
+                        phonemes=phone_diagnostics_fb,
                         flagged=False,
                         diagnostic_note=None,
                     )
@@ -493,7 +704,8 @@ class CTCPhonemeAligner(PronunciationScorer):
                 phoneme_inventory="ARPAbet-39",
                 transcript_evaluated=transcript_text,
                 transcript_source="ASR-generated (faster-whisper)",
-                word_diagnostics=word_diagnostics,
+                reference_text=None,
+                word_diagnostics=word_diagnostics_fb,
                 methodology_note=(
                     "Experimental diagnostic: Word boundaries mapped to canonical ARPAbet targets. "
                     "Notice: Because transcripts are generated by ASR, pronunciation anomalies cannot be differentiated "
@@ -509,6 +721,7 @@ class CTCPhonemeAligner(PronunciationScorer):
                 phoneme_inventory="ARPAbet-39",
                 transcript_evaluated=transcript_text,
                 transcript_source="ASR-generated (faster-whisper)",
+                reference_text=None,
                 word_diagnostics=[],
                 methodology_note=f"Processing failed: {exc}",
                 error_message=str(exc),

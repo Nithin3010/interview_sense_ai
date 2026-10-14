@@ -1,5 +1,5 @@
 import React from 'react';
-import { SpellCheck, Info, AlertCircle, ShieldAlert, Target } from 'lucide-react';
+import { SpellCheck, Info, AlertCircle, ShieldAlert, Target, MessageSquare } from 'lucide-react';
 import type { PronunciationAssessment } from '../../types/analysis';
 
 interface PronunciationCardProps {
@@ -68,7 +68,14 @@ export const PronunciationCard: React.FC<PronunciationCardProps> = ({ pronunciat
           Source: <code>{transcript_source}</code>
         </span>
         {alignment_coverage_ratio != null && (
-          <span className="meta-pill" title="Proportion of expected reference phonemes successfully aligned">
+          <span
+            className="meta-pill"
+            title={
+              reference_text
+                ? 'Proportion of expected reference phonemes successfully aligned'
+                : 'Proportion of candidate hypothesis phonemes successfully aligned'
+            }
+          >
             Coverage: <strong>{(alignment_coverage_ratio * 100).toFixed(0)}%</strong>
           </span>
         )}
@@ -79,13 +86,26 @@ export const PronunciationCard: React.FC<PronunciationCardProps> = ({ pronunciat
         )}
       </div>
 
-      {/* Target Reference Sentence Callout */}
+      {/* Target Reference Sentence Callout (Reference Mode) */}
       {reference_text && (
         <div className="reference-sentence-banner" style={{ marginTop: '1rem' }}>
           <Target size={18} color="var(--accent-primary)" />
           <div>
             <span className="reference-label">Target Reference Sentence:</span>
             <p className="reference-content">&ldquo;{reference_text}&rdquo;</p>
+          </div>
+        </div>
+      )}
+
+      {/* Spontaneous Speech Mode Hypothesis Banner */}
+      {!reference_text && !isUnavailable && !isError && (
+        <div className="reference-sentence-banner" style={{ marginTop: '1rem' }}>
+          <MessageSquare size={18} color="var(--accent-primary)" />
+          <div>
+            <span className="reference-label">Spontaneous Mode — ASR Hypothesis:</span>
+            <p className="reference-content">
+              Phonemes aligned against recognized transcript hypotheses. Discrepancies may reflect ASR recognition variance, regional accents, or background noise rather than mispronunciation.
+            </p>
           </div>
         </div>
       )}
@@ -114,12 +134,25 @@ export const PronunciationCard: React.FC<PronunciationCardProps> = ({ pronunciat
         </div>
       )}
 
+      {/* Empty Diagnostics State */}
+      {(isReady || isExperimental) && word_diagnostics.length === 0 && (
+        <div className="empty-subcard" style={{ marginTop: '1rem', padding: '1.25rem' }}>
+          <AlertCircle size={20} color="var(--accent-amber)" />
+          <div>
+            <strong>No scorable phoneme targets identified</strong>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+              {methodology_note || 'The audio or speech recognition transcript did not produce candidate words for phonetic alignment.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Aligned Phoneme Diagnostics Grid */}
       {(isReady || isExperimental) && word_diagnostics.length > 0 && (
         <div style={{ marginTop: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <h4 className="subcard-title" style={{ margin: 0 }}>
-              {reference_text ? 'Reference Phoneme Alignment & Evidence' : 'Experimental Phoneme Breakdown'}
+              {reference_text ? 'Reference Phoneme Alignment & Evidence' : 'Spontaneous Phoneme Alignment & Hypothesis Evidence'}
             </h4>
             <div className="legend-pills-row">
               <span className="legend-indicator dot-high">High Evidence (&ge;70%)</span>

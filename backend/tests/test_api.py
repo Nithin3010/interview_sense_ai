@@ -89,10 +89,10 @@ def test_analyze_valid_audio(client: TestClient, valid_mono_wav_bytes):
     assert "dynamic_range_db" in energy
     assert "note" in energy
 
-    # Milestone 6 Pronunciation Assessment Assertions
+    # Milestone 6 & 10 Pronunciation Assessment Assertions
     assert "pronunciation" in data
     pron = data["pronunciation"]
-    assert pron["status"] in ("unavailable", "experimental", "error")
+    assert pron["status"] in ("unavailable", "experimental", "ready", "error")
     assert "model_identifier" in pron
     assert "phoneme_inventory" in pron
     assert "transcript_source" in pron
@@ -263,6 +263,8 @@ def test_analyze_reference_text_when_model_unavailable(client: TestClient, valid
     from backend.app.services.pronunciation.ctc_aligner import CTCPhonemeAligner
 
     original_scorer = model_manager.pronunciation_scorer
+    original_load = model_manager.load_pronunciation_model
+    model_manager.load_pronunciation_model = lambda: False
     model_manager.pronunciation_scorer = CTCPhonemeAligner(model=None)
 
     try:
@@ -279,5 +281,6 @@ def test_analyze_reference_text_when_model_unavailable(client: TestClient, valid
         assert "unavailable" in data["pronunciation"]["methodology_note"].lower()
     finally:
         model_manager.pronunciation_scorer = original_scorer
+        model_manager.load_pronunciation_model = original_load
 
 

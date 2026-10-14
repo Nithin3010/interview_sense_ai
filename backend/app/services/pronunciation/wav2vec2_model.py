@@ -188,7 +188,8 @@ class MockPhonemeModel:
             return self.custom_emissions, time_per_frame
 
         num_frames = max(5, int(len(samples) / 320))
-        vocab_size = len(self._vocab)
+        max_id = max(self._vocab.values()) if self._vocab else 49
+        vocab_size = max(len(self._vocab), max_id + 1)
 
         # Baseline background noise log-probs
         emissions = np.full((num_frames, vocab_size), -4.5, dtype=np.float32)

@@ -204,4 +204,49 @@ test('Frontend Contract & State Handling Verification', async (t) => {
     assert.equal(referencePronunciation.word_diagnostics.length, 1);
     assert.equal(referencePronunciation.word_diagnostics[0].phonemes[0].is_supported, true);
   });
+
+  await t.test('handles spontaneous pronunciation assessment payload with hypothesis metadata', () => {
+    const spontaneousPronunciation = {
+      status: 'ready',
+      model_identifier: 'facebook/wav2vec2-lv-60-espeak-cv-ft',
+      phoneme_inventory: 'ARPAbet-39',
+      transcript_evaluated: 'I have worked on distributed systems',
+      transcript_source: 'ASR-generated (faster-whisper)',
+      reference_text: null,
+      alignment_coverage_ratio: 0.94,
+      mean_acoustic_confidence: 0.82,
+      word_diagnostics: [
+        {
+          word: 'distributed',
+          start: 1.15,
+          end: 1.82,
+          flagged: false,
+          diagnostic_note: null,
+          mean_acoustic_confidence: 0.84,
+          phonemes: [
+            {
+              phoneme: 'D',
+              start: 1.15,
+              end: 1.22,
+              duration: 0.07,
+              acoustic_match_confidence: 0.89,
+              is_supported: true,
+              diagnostic_note: null,
+            },
+          ],
+        },
+      ],
+      methodology_note: 'Spontaneous speech phoneme assessment using Wav2Vec2 CTC phonetic alignment against ASR hypotheses.',
+      error_message: null,
+    };
+
+    assert.equal(spontaneousPronunciation.status, 'ready');
+    assert.equal(spontaneousPronunciation.reference_text, null);
+    assert.equal(spontaneousPronunciation.transcript_source, 'ASR-generated (faster-whisper)');
+    assert.equal(spontaneousPronunciation.alignment_coverage_ratio, 0.94);
+    assert.equal(spontaneousPronunciation.mean_acoustic_confidence, 0.82);
+    assert.equal(spontaneousPronunciation.word_diagnostics.length, 1);
+    assert.equal(spontaneousPronunciation.word_diagnostics[0].word, 'distributed');
+  });
 });
+

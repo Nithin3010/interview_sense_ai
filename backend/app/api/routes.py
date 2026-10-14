@@ -79,9 +79,10 @@ async def analyze_audio(
         if not trimmed:
             raise InvalidReferenceTextError("Reference text cannot be empty or whitespace only.")
         cleaned_reference = trimmed
-        # Lazily initialize acoustic pronunciation model if needed
-        if not models.is_pronunciation_ready:
-            models.load_pronunciation_model()
+
+    # 2. Lazily initialize acoustic pronunciation model if needed
+    if not models.is_pronunciation_ready:
+        models.load_pronunciation_model()
 
     # 2. Read uploaded audio stream while strictly enforcing max file size
     audio_bytes = await read_upload_with_limit(audio_file)
